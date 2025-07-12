@@ -9,7 +9,7 @@ class Sudoku:
     def __init__(self, root):
         self.root = root
         self.root.title("Sudoku Game")
-        self.frame(400, 400)
+        self.frame(450, 450)
         self.entries = []
         self.puzzle = []
         self.solution = []
@@ -19,11 +19,14 @@ class Sudoku:
         self.start_time = None
         self.timer_label = None
         self.score_label = None
+        self.hint_label = None
+        self.numbers_left_label = None
         self.timer_running = False
         self.cell_states = {}
         self.move_history = []
         self.pause_button = None
         self.paused = False
+        self.hints_used = 0
         self.difficulty_screen()
 
 
@@ -66,17 +69,20 @@ class Sudoku:
             widget.destroy()
 
         self.score = 0
-        self.start_time = time.time()
+        self.hints_used = 0
         self.timer_running = True
         self.paused = False
         self.cell_states = {}
         self.move_history = []
+        self.start_time = time.time()
+
         self.create_grid()
         self.update_timer()
+        self.update_numbers_left()
 
 
     def create_grid(self):
-        grid_frame = tk.Frame(self.root)
+        grid_frame = tk.Frame(self.root, bg="black")
         grid_frame.pack(pady=10)
 
         self.entries = []
@@ -85,7 +91,29 @@ class Sudoku:
             row = []
             for j in range(9):
                 val = self.puzzle[i][j]
-                entry = tk.Entry(grid_frame, width=2, font=("Arial", 16), justify="center", relief="solid")
+
+                top = 2 if i % 3 == 0 else 1
+                bottom = 2 if i == 8 else (2 if (i + 1) % 3 == 0 else 1)
+                left = 2 if j % 3 == 0 else 1
+                right = 2 if j == 8 else (2 if (j + 1) % 3 == 0 else 1)
+
+                cell_frame = tk.Frame(
+                    grid_frame,
+                    highlightbackground="black",
+                    highlightcolor="black",
+                    highlightthickness=0,
+                    bd=0
+                )
+                cell_frame.grid(row=i, column=j, padx=(left, right), pady=(top, bottom))
+
+                entry = tk.Entry(
+                    cell_frame,
+                    width=2,
+                    font=("Arial", 16),
+                    justify="center",
+                    relief="solid",
+                    bd=0
+                )
 
                 if val != 0:
                     entry.insert(0, str(val))
@@ -96,25 +124,36 @@ class Sudoku:
                     var.trace_add("write", lambda *args, i=i, j=j, var=var: self.cell_change(i, j, var))
                     self.cell_states[(i, j)] = None
 
-                entry.grid(row=i, column=j, padx=1, pady=1)
+                entry.pack()
                 row.append(entry)
             self.entries.append(row)
 
         control_frame = tk.Frame(self.root)
         control_frame.pack(pady=10)
 
-        tk.Button(control_frame, text="Reset", command=self.reset_grid).grid(row=0, column=0, padx=5)
-        tk.Button(control_frame, text="Hint", command=self.give_hint).grid(row=0, column=1, padx=5)
-        tk.Button(control_frame, text="Undo", command=self.undo_move).grid(row=0, column=2, padx=5)
+        button_frame = tk.Frame(control_frame)
+        button_frame.pack()
 
-        self.pause_button = tk.Button(control_frame, text="Pause", command=self.toggle_pause)
+        tk.Button(button_frame, text="Reset", font=("Helvetica", 12), command=self.reset_grid).grid(row=0, column=0, padx=5)
+        tk.Button(button_frame, text="Hint", font=("Helvetica", 12), command=self.give_hint).grid(row=0, column=1, padx=5)
+        tk.Button(button_frame, text="Undo", font=("Helvetica", 12), command=self.undo_move).grid(row=0, column=2, padx=5)
+        self.pause_button = tk.Button(button_frame, text="Pause", font=("Helvetica", 12), command=self.toggle_pause)
         self.pause_button.grid(row=0, column=3, padx=5)
 
-        self.score_label = tk.Label(control_frame, text=f"Score: {self.score}", font=("Arial", 12))
-        self.score_label.grid(row=0, column=4, padx=10)
+        status_frame = tk.Frame(control_frame)
+        status_frame.pack(pady=5)
 
-        self.timer_label = tk.Label(control_frame, text="Time: 00:00", font=("Arial", 12))
-        self.timer_label.grid(row=0, column=5, padx=10)
+        self.score_label = tk.Label(status_frame, text=f"Score: {self.score}", font=("Arial", 12))
+        self.score_label.pack(side="left", padx=10)
+
+        self.timer_label = tk.Label(status_frame, text="Time: 00:00", font=("Arial", 12))
+        self.timer_label.pack(side="left", padx=10)
+
+        self.hint_label = tk.Label(status_frame, text=f"Hints left: {3 - self.hints_used}", font=("Arial", 12))
+        self.hint_label.pack(side="left", padx=10)
+
+        self.numbers_left_label = tk.Label(self.root, text="", font=("Arial", 10))
+        self.numbers_left_label.pack(pady=5)
 
 
     def update_timer(self):
@@ -147,7 +186,7 @@ class Sudoku:
             else:
                 self.score += 10
             self.cell_states[(i, j)] = "correct"
-            entry.config(fg="green", state="disabled") 
+            entry.config(fg="green", state="disabled", disabledforeground="green")
         elif val != correct_val and val != "":
             if previous_state != "wrong":
                 if previous_state == "correct":
@@ -161,10 +200,45 @@ class Sudoku:
             entry.config(fg="black")
 
         self.update_score()
+        self.update_numbers_left()
 
         if all(state == "correct" for state in self.cell_states.values()):
             self.timer_running = False
-            messagebox.showinfo("Congratulations!", f"You've completed the Sudoku!\nScore: {self.score}")
+            self.show_completion_popup()
+
+
+    def show_completion_popup(self):
+        popup = tk.Toplevel(self.root)
+        popup.title("Congratulations!")
+        
+        popup_width = 300
+        popup_height = 150
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+        x = (screen_width // 2) - (popup_width // 2)
+        y = (screen_height // 2) - (popup_height // 2)
+        popup.geometry(f"{popup_width}x{popup_height}+{x}+{y}")
+        
+        popup.transient(self.root)  
+        popup.grab_set()  
+
+        label = tk.Label(popup, text=f"You've completed the Sudoku!\nScore: {self.score}", font=("Arial", 12))
+        label.pack(pady=15)
+
+        button_frame = tk.Frame(popup)
+        button_frame.pack(pady=10)
+
+        btn_new = tk.Button(button_frame, text="New Game", font=("Helvetica", 12, "bold"), width=10, command=lambda: self.start_new_game(popup))
+        btn_new.grid(row=0, column=0, padx=10)
+
+        btn_exit = tk.Button(button_frame, text="Exit", font=("Helvetica", 12, "bold"), width=10, command=self.root.destroy)
+        btn_exit.grid(row=0, column=1, padx=10)
+
+
+    def start_new_game(self, popup):
+        popup.destroy()
+        self.difficulty.set("")
+        self.difficulty_screen()
 
 
     def undo_move(self):
@@ -187,6 +261,7 @@ class Sudoku:
             elif state == "wrong":
                 self.score -= 5
         self.update_score()
+        self.update_numbers_left()
 
 
     def reset_grid(self):
@@ -200,27 +275,56 @@ class Sudoku:
                     entry.insert(0, str(val))
                     entry.config(state="disabled", disabledforeground="blue")
                 else:
-                    entry.config(fg="black")
+                    entry.config(fg="black", bg="white")
         self.score = 0
         self.cell_states = {(i, j): None for i in range(9) for j in range(9) if self.original[i][j] == 0}
         self.move_history.clear()
         self.update_score()
+        self.hints_used = 0
+        self.hint_label.config(text=f"Hints left: {3 - self.hints_used}")
+        self.update_numbers_left()
 
 
     def give_hint(self):
+        if self.hints_used >= 3:
+            messagebox.showinfo("Hint Limit Reached", "You can only use 3 hints per game.")
+            return
+
         for i in range(9):
             for j in range(9):
                 if self.puzzle[i][j] == 0 and self.entries[i][j].get() == "":
                     self.entries[i][j].insert(0, str(self.solution[i][j]))
-                    self.entries[i][j].config(fg="green", state="disabled")
+                    self.entries[i][j].config(fg="green", state="disabled", disabledforeground="green", bg="#ccffcc")
+                    self.entries[i][j].after(500, lambda e=self.entries[i][j]: e.config(bg="white"))
                     self.cell_states[(i, j)] = "correct"
-                    self.score -= 5
+                    self.score -= 15
+                    self.hints_used += 1
                     self.update_score()
+                    self.hint_label.config(text=f"Hints left: {3 - self.hints_used}")
+                    self.update_numbers_left()
                     return
+
+        messagebox.showinfo("No Hint", "No more empty cells to hint.")
 
 
     def update_score(self):
         self.score_label.config(text=f"Score: {self.score}")
+
+
+    def update_numbers_left(self):
+        counts = {str(i): 9 for i in range(1, 10)}
+
+        for i in range(9):
+            for j in range(9):
+                val = self.entries[i][j].get()
+                if val in counts and (self.entries[i][j]['state'] == 'disabled' or self.cell_states.get((i,j)) == 'correct'):
+                    counts[val] -= 1
+
+        display_text = "Numbers left:  "
+        for num in range(1, 10):
+            display_text += f"{num}-{[counts[str(num)]]}  "
+
+        self.numbers_left_label.config(text=display_text)
 
 
     def generate_board(self):
